@@ -22,26 +22,29 @@ class SparseDataset(Dataset):
     def __getitem__(self, idx):
         return self.time_values[idx], self.data_values[idx], self.mask[idx]
     
-def generate_data_from_function(f, num_samples=10000, sparsity=0.6, n_tmpts=100, noise_std=0.01):
+def generate_data_from_function(f, num_samples=10000, sparsity=0.6, n_tmpts=100, noise_std=0.1):
     time_pts = np.linspace(0, 1, n_tmpts)
     X = []
     T = []
     
     for _ in range(num_samples):
-        num_points = np.random.randint(0, int(min(sparsity * n_tmpts, n_tmpts)))
+        num_points = np.random.randint(int(min(sparsity * n_tmpts, n_tmpts) * 0.75), int(min(sparsity * n_tmpts, n_tmpts)))
         indices = np.sort(np.random.choice(n_tmpts, num_points, replace=False))
-        sampled_times = time_pts[indices]
         
-        # Sampled values with noise
+        sampled_times = time_pts[indices]
         sampled_values = f(sampled_times) + np.random.normal(0, noise_std, size=sampled_times.shape)
         
+        # Initialize full arrays with NaNs
         full_values = np.full(n_tmpts, np.nan)
-        full_values[:num_points] = sampled_values  # Fill valid data at the start, NaNs at the end
         full_tmpts = np.full(n_tmpts, np.nan)
-        full_tmpts[:num_points] = sampled_times
+        
+        # Assign sampled values at the correct indices
+        full_values[indices] = sampled_values
+        full_tmpts[indices] = sampled_times
+        
         X.append(full_values)
-        T.append(full_tmpts) 
-
+        T.append(full_tmpts)
+    
     return np.array(T), np.array(X)
 
 def get_dataloaders(T, X, batch_size=64, train_split=0.8, val_split=0.1):

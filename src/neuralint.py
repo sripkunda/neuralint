@@ -1,115 +1,82 @@
+import os
 import torch
 import torch.nn as nn
 import math
-from data_utils import get_checkpoint_path
-
-class PositionalEncoding(nn.Module):
-    def __init__(self, hidden_dim: int, dropout: float = 0.1, max_len: int = 5000):
-        super().__init__()
-        self.dropout = nn.Dropout(p=dropout)
-
-        position = torch.arange(max_len).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, hidden_dim, 2) * (-math.log(10000.0) / hidden_dim))
-        pe = torch.zeros(max_len, 1, hidden_dim)
-        pe[:, 0, 0::2] = torch.sin(position * div_term)
-        pe[:, 0, 1::2] = torch.cos(position * div_term)
-        self.register_buffer('pe', pe)
-
-    def forward(self, x):
-        x = x + self.pe[:x.size(0)]
-        return self.dropout(x)
+from model_utils import load_model
+from transformer import TransformerModel
 
 class NeuralInt(nn.Module):
-    def __init__(self, input_dim, hidden_dim = 512, num_attention_heads = 2, num_int_attention_heads = 10, num_encoder_layers = 6, num_decoder_layers = 6, dim_feedforward = 2048, dropout=0.1):
+    def __init__(self, input_dim, hidden_dim=512, num_attention_heads=2, num_int_attention_heads=8, num_encoder_layers=6, num_decoder_layers=6, dim_feedforward=2048, dropout=0.1):
         super(NeuralInt, self).__init__()
-        self.embedding = nn.Linear(input_dim, hidden_dim)
-        self.transformer = nn.Transformer(hidden_dim, num_attention_heads, num_encoder_layers, num_decoder_layers, dim_feedforward, dropout, activation="gelu")
-        self.linear = nn.Linear(hidden_dim, input_dim)
-        self.intg = Intg(input_dim, num_int_attention_heads)
-        self.diff = Diff()
-
+        self.transformer = TransformerModel(input_dim, hidden_dim, num_attention_heads, num_encoder_layers, num_decoder_layers, dim_feedforward, dropout)
+        self.diffintg = DiffIntg(input_dim, num_attention_heads=num_int_attention_heads)
 
     def forward(self, t, x):
-        embedded_t = self.embedding(t)
-        embedded_x = self.embedding(x)
-        output = self.transformer(embedded_t, embedded_x)
-        output = self.linear(output)
-        return output
+        transformer_output = self.transformer(t, x)
+        neural_int_output, integral_fn, _ = self.diffintg(transformer_output.shape[0])
+        return transformer_output, neural_int_output, integral_fn
 
-class Intg(nn.Module):
-    def __init__(self, input_dim, num_attention_heads = 10):
+class DiffIntg(nn.Module):
+    def __init__(self, n_tmpts, hidden_dim=512, num_attention_heads=8, dim_feedforward=2048):
         super().__init__()
+        self.n_tmpts = n_tmpts
+        self.num_heads = num_attention_heads
+        self.hidden_dim = hidden_dim
+        self.head_dim = hidden_dim // num_attention_heads
 
-class Diff(nn.Module):
-    def __init__(self):
-        super().__init__()
-    
-    def forward(self, input):
-        input.grad = None
-        input.backward(retain_graph=True)
-        return input.grad
+        self.embedding = nn.Linear(1, hidden_dim)
+        self.output = nn.Sequential(
+            nn.Linear(hidden_dim, dim_feedforward),
+            nn.GELU(),
+            nn.Linear(dim_feedforward, dim_feedforward),
+            nn.GELU(),
+            nn.Linear(dim_feedforward, 1)
+        )
+        self.q_proj = nn.Linear(hidden_dim, hidden_dim)
+        self.k_proj = nn.Linear(hidden_dim, hidden_dim)
+        self.v_proj = nn.Linear(hidden_dim, hidden_dim)
+        self.out_proj = nn.Linear(hidden_dim, hidden_dim)
 
-def train(model, loss_fn, train_loader, val_loader=None, num_epochs=10, learning_rate=3e-4, weight_decay=1e-8, checkpoint_dir="checkpoints"):
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model.to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
-    
-    os.makedirs(checkpoint_dir, exist_ok=True)
-    best_val_loss = float("inf")
-    
-    model.train()
-    for epoch in range(num_epochs):
-        total_train_loss = 0
-        for t, x, masks in train_loader:
-            t, x, masks = t.to(device), x.to(device), masks.to(device)
-            optimizer.zero_grad()
-            outputs = model(t, x)
-            
-            # Apply mask to compute loss only for observed values
-            loss = loss_fn(outputs * masks, x * masks)
-            loss.backward()
-            optimizer.step()
-            
-            total_train_loss += loss.item()
-        
-        avg_train_loss = total_train_loss / len(train_loader)
-        print(f"Epoch {epoch+1}/{num_epochs}, Train Loss: {avg_train_loss:.4f}")
-        
-        # Save checkpoint after every epoch
-        checkpoint_path = get_checkpoint_path(checkpoint_dir, f"checkpoint_epoch_{epoch+1}.pth")
-        torch.save({
-            'epoch': epoch + 1,
-            'model_state_dict': model.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
-            'train_loss': avg_train_loss,
-        }, checkpoint_path)
-        
-        print(f"Checkpoint saved: {checkpoint_path}")
-        
-        # Validation Step
-        if val_loader is not None:
-            model.eval()
-            total_val_loss = 0
-            with torch.no_grad():
-                for t, x, masks in val_loader:
-                    t, x, masks = t.to(device), x.to(device), masks.to(device)
-                    outputs = model(t, x)
-                    loss = loss_fn(outputs * masks, x * masks)
-                    total_val_loss += loss.item()
-            
-            avg_val_loss = total_val_loss / len(val_loader)
-            print(f"Epoch {epoch+1}/{num_epochs}, Validation Loss: {avg_val_loss:.4f}")
-            
-            # Save the best model based on validation loss
-            if avg_val_loss < best_val_loss:
-                best_val_loss = avg_val_loss
-                best_model_path = os.path.join(checkpoint_dir, "best_model.pth")
-                torch.save({
-                    'epoch': epoch + 1,
-                    'model_state_dict': model.state_dict(),
-                    'optimizer_state_dict': optimizer.state_dict(),
-                    'val_loss': avg_val_loss,
-                }, best_model_path)
-                print(f"Best model saved: {best_model_path}")
-            
-            model.train()
+    def forward(self, batch_size):
+        # Create time values from 0 to 1, with shape (batch_size, n_tmpts, 1)
+        t = torch.linspace(0, 1, self.n_tmpts, requires_grad=True, device='cuda' if torch.cuda.is_available() else 'cpu')
+        t = t.unsqueeze(0).expand(batch_size, -1).unsqueeze(-1)  # Shape: (batch_size, n_tmpts, 1)
+        t = t.detach().requires_grad_()
+
+        # Project embeddings
+        embedded_t = self.embedding(t)  # Shape: (batch_size, n_tmpts, hidden_dim)
+
+        # Compute attention
+        q = self.q_proj(embedded_t).view(batch_size, self.n_tmpts, self.num_heads, self.head_dim).transpose(1, 2)
+        k = self.k_proj(embedded_t).view(batch_size, self.n_tmpts, self.num_heads, self.head_dim).transpose(1, 2)
+        v = self.v_proj(embedded_t).view(batch_size, self.n_tmpts, self.num_heads, self.head_dim).transpose(1, 2)
+
+        attn_weights = torch.matmul(q, k.transpose(-2, -1)) / (self.head_dim ** 0.5)
+        attn_output = torch.matmul(attn_weights, v)  
+
+        # Merge heads
+        attn_output = attn_output.transpose(1, 2).contiguous().view(batch_size, self.n_tmpts, self.hidden_dim)
+        integral_fn = self.out_proj(attn_output)  
+
+        # Run through feedforward network
+        integral_fn = self.output(integral_fn).view(batch_size, self.n_tmpts)
+ 
+        # Compute gradients with respect to t
+        grad_outputs = torch.ones_like(integral_fn)
+        grad = torch.autograd.grad(outputs=integral_fn, inputs=t,
+                                   grad_outputs=grad_outputs,
+                                   create_graph=True, retain_graph=True)[0].view(batch_size, self.n_tmpts)
+
+        return grad, integral_fn, t
+
+
+
+def get_imputation_from_checkpoint(T, X):
+    n_tpts = T.shape[1]
+    model = NeuralInt(input_dim=n_tpts)
+    epoch, loss = load_model(model)
+
+    print(f"Loaded model checkpoint with epoch: {epoch}, and validation loss: {loss}")
+
+    transformer_out, neuralint_out, integral_fn = model(T, X)
+    return transformer_out, neuralint_out, integral_fn

@@ -17,7 +17,7 @@ class NeuralInt(nn.Module):
         return transformer_output, neural_int_output, integral_fn
 
 class DiffIntg(nn.Module):
-    def __init__(self, n_tmpts, hidden_dim=512, num_attention_heads=8, dim_feedforward=2048):
+    def __init__(self, n_tmpts, hidden_dim=128, num_attention_heads=8, dim_feedforward=512):
         super().__init__()
         self.n_tmpts = n_tmpts
         self.num_heads = num_attention_heads

@@ -82,4 +82,5 @@ def compute_loss(transformer_out, neuralint_out, x, integral_function, masks):
     mse_loss = torch.nn.MSELoss()
     transformer_target_penalty = mse_loss(transformer_out * masks, x * masks)
     neuralint_transformer_penalty = mse_loss(neuralint_out, transformer_out)
-    return 3/4 * neuralint_transformer_penalty + 1/4 * transformer_target_penalty + torch.mean(integral_function.T[0]**2)
+    neuralint_target_penalty = mse_loss(neuralint_out * masks, x * masks)
+    return 1/2 * neuralint_transformer_penalty + 1/6 * transformer_target_penalty + 1/6 * transformer_target_penalty + 1/6 * neuralint_target_penalty + torch.mean(integral_function.T[0]**2)

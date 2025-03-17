@@ -1,4 +1,5 @@
 .venv
 __pycache__
 src/checkpoints
-src/checkpoints_old
+src/model_checkpoints
+datasets

@@ -5,6 +5,7 @@ import numpy as np
 
 class SparseDataset(Dataset):
     def __init__(self, time_values, data_values):
+        # Initialize the dataset with time values and data values
         self.time_values = torch.tensor(time_values, dtype=torch.float32)  # (N, T)
         self.data_values = torch.tensor(data_values, dtype=torch.float32)  # (N, T)
         
@@ -17,20 +18,25 @@ class SparseDataset(Dataset):
         self.data_values[torch.isnan(self.data_values)] = 0.0
 
     def __len__(self):
+        # Return the number of samples in the dataset
         return len(self.data_values)
 
     def __getitem__(self, idx):
+        # Return the time values, data values, and mask for a given index
         return self.time_values[idx], self.data_values[idx], self.mask[idx]
     
 def generate_data_from_function(f, num_samples=10000, sparsity=0.6, n_tmpts=100, noise_std=0.1):
+    # Generate data from a given function with specified sparsity and noise
     time_pts = np.linspace(0, 1, n_tmpts)
     X = []
     T = []
     
     for _ in range(num_samples):
+        # Determine the number of points to sample
         num_points = np.random.randint(int(min(sparsity * n_tmpts, n_tmpts) * 0.75), int(min(sparsity * n_tmpts, n_tmpts)))
         indices = np.sort(np.random.choice(n_tmpts, num_points, replace=False))
         
+        # Sample times and values
         sampled_times = time_pts[indices]
         sampled_values = f(sampled_times) + np.random.normal(0, noise_std, size=sampled_times.shape)
         
@@ -48,6 +54,7 @@ def generate_data_from_function(f, num_samples=10000, sparsity=0.6, n_tmpts=100,
     return np.array(T), np.array(X)
 
 def get_dataloaders(T, X, batch_size=64, train_split=0.8, val_split=0.1):
+    # Create dataloaders for training, validation, and testing
     dataset = SparseDataset(T, X)
     
     N = len(dataset)
@@ -55,8 +62,10 @@ def get_dataloaders(T, X, batch_size=64, train_split=0.8, val_split=0.1):
     val_size = int(val_split * N)
     test_size = N - train_size - val_size
 
+    # Split the dataset into training, validation, and test sets
     train_set, val_set, test_set = torch.utils.data.random_split(dataset, [train_size, val_size, test_size])
 
+    # Create dataloaders for each set
     dataloaders = {
         "train": DataLoader(train_set, batch_size=batch_size, shuffle=True),
         "validate": DataLoader(val_set, batch_size=batch_size, shuffle=False),
@@ -66,4 +75,5 @@ def get_dataloaders(T, X, batch_size=64, train_split=0.8, val_split=0.1):
     return dataloaders
 
 def get_checkpoint_path(checkpoint_dir="model_checkpoints", checkpoint_name="best_model.pth"):
+    # Get the full path to the checkpoint file
     return os.path.join(checkpoint_dir, checkpoint_name)

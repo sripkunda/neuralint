@@ -14,10 +14,10 @@ class NeuralInt(nn.Module):
     def forward(self, t, x):
         transformer_output = self.transformer(t, x)
         neural_int_output, integral_fn, _ = self.diffintg(transformer_output.shape[0])
-        return transformer_output, neural_int_output, integral_fn
+        return transformer_output, neural_int_output, integral_fn - integral_fn[:, 0].unsqueeze(1)
 
 class DiffIntg(nn.Module):
-    def __init__(self, n_tmpts, hidden_dim=128, num_attention_heads=8, dim_feedforward=512):
+    def __init__(self, n_tmpts, hidden_dim=128, num_attention_heads=2, dim_feedforward=512):
         super().__init__()
         self.n_tmpts = n_tmpts
         self.num_heads = num_attention_heads
@@ -71,10 +71,10 @@ class DiffIntg(nn.Module):
 
 
 
-def get_imputation_from_checkpoint(T, X):
+def get_imputation_from_checkpoint(T, X, checkpoint_dir="model_checkpoints"):
     n_tpts = T.shape[1]
     model = NeuralInt(input_dim=n_tpts)
-    epoch, loss = load_model(model)
+    epoch, loss = load_model(model, checkpoint_dir=checkpoint_dir)
 
     print(f"Loaded model checkpoint with epoch: {epoch}, and validation loss: {loss}")
 

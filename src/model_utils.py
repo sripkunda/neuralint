@@ -3,7 +3,7 @@ import numpy as np
 import torch
 from data_utils import get_checkpoint_path
 
-def load_model(model, checkpoint_dir="checkpoints", checkpoint_name="best_model.pth", optimizer=None):
+def load_model(model, checkpoint_dir="model_checkpoints", checkpoint_name="best_model.pth", optimizer=None):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     try: 
         checkpoint = torch.load(get_checkpoint_path(checkpoint_dir, checkpoint_name), map_location=device)
@@ -16,7 +16,7 @@ def load_model(model, checkpoint_dir="checkpoints", checkpoint_name="best_model.
     except:
         return 0, float("inf")
     
-def train(model, optimizer, train_loader, val_loader=None, num_epochs=100, checkpoint_dir="checkpoints", save_every = 10, starting_epoch = 0, best_val_loss = float("inf")):
+def train(model, optimizer, train_loader, val_loader=None, num_epochs=100, checkpoint_dir="model_checkpoints", save_every = 10, starting_epoch = 0, best_val_loss = float("inf")):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
     os.makedirs(checkpoint_dir, exist_ok=True)
@@ -50,7 +50,7 @@ def train(model, optimizer, train_loader, val_loader=None, num_epochs=100, check
             print(f"Checkpoint saved: {checkpoint_path}")
         
         # Validation Step
-        if val_loader is not None:
+        if val_loader is not None and len(val_loader) > 0:
             model.eval()
             total_val_loss = 0
             
@@ -77,10 +77,25 @@ def train(model, optimizer, train_loader, val_loader=None, num_epochs=100, check
                 print(f"Best model saved: {best_model_path}")
             
             model.train()
-
+        else:
+            # Save the best model based on validation loss
+            if avg_train_loss < best_val_loss:
+                best_val_loss = avg_train_loss
+                best_model_path = os.path.join(checkpoint_dir, "best_model.pth")
+                torch.save({
+                    'epoch': epoch + 1,
+                    'model_state_dict': model.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'val_loss': avg_train_loss,
+                }, best_model_path)
+                print(f"Best model saved: {best_model_path}")
+            
+            model.train()
 def compute_loss(transformer_out, neuralint_out, x, integral_function, masks):
     mse_loss = torch.nn.MSELoss()
     transformer_target_penalty = mse_loss(transformer_out * masks, x * masks)
     neuralint_transformer_penalty = mse_loss(neuralint_out, transformer_out)
-    neuralint_target_penalty = mse_loss(neuralint_out * masks, x * masks)
-    return 1/2 * neuralint_transformer_penalty + 1/6 * transformer_target_penalty + 1/6 * transformer_target_penalty + 1/6 * neuralint_target_penalty + torch.mean(integral_function.T[0]**2)
+
+    riemann_sum = torch.sum(transformer_out / transformer_out.shape[1], dim=1)
+    riemann_sum_integral_function_penalty = mse_loss(integral_function.T[-1], riemann_sum)
+    return 1/6 * riemann_sum_integral_function_penalty + 1/3 * neuralint_transformer_penalty + 1/3 * transformer_target_penalty + 1/6 * transformer_target_penalty

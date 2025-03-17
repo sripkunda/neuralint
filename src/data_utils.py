@@ -65,5 +65,5 @@ def get_dataloaders(T, X, batch_size=64, train_split=0.8, val_split=0.1):
     
     return dataloaders
 
-def get_checkpoint_path(checkpoint_dir="checkpoints", checkpoint_name="best_model.pth"):
+def get_checkpoint_path(checkpoint_dir="model_checkpoints", checkpoint_name="best_model.pth"):
     return os.path.join(checkpoint_dir, checkpoint_name)
